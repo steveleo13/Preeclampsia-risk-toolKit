@@ -1,2 +1,3 @@
 # Preeclampsia-risk-toolKit
-A web-based tool for preeclampsia risk assessment in low-resource settings
+
+A web-based tool designed for preeclampsia risk assessment in low-resource settings, enabling early identification of high-risk pregnancies. It uses accessible inputs like clinical history, BMI, manual blood pressure, and urine dipstick results to calculate a weighted risk score. The intuitive interface guides community health workers and midwives to stratify patients into low, moderate, or high-risk categories. Based on evidence from WHO and FIGO guidelines, it recommends actions like low-dose aspirin (81-150 mg) for high-risk cases. Deployable on basic smartphones or computers, it requires minimal training and no advanced diagnostics. The tool aims to reduce maternal and perinatal mortality by facilitating timely interventions in resource-constrained environments
