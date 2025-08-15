@@ -1,0 +1,408 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { Download, Upload, Plus, Trash2, RefreshCw, FileSpreadsheet, Save } from "lucide-react";
+
+/**
+ * Preeclampsia Risk Scoring Web App
+ * - Single-file React component (TailwindCSS styling)
+ * - Offline-friendly: stores data in localStorage only (no server)
+ * - Computes MAP, weighted Risk Score, Risk Category, and Action Guidance
+ * - Fits low-resource workflows: minimal inputs, quick scoring, printable summary
+ *
+ * Scoring Weights (from user's framework):
+ *   Mild (1 pt): Age <19 or >35, BMI >30, MAP >85, Proteinuria ≥1+
+ *   Moderate (2 pt): Family History, Multiple Pregnancy
+ *   Severe (3 pt): Previous PE, Chronic Hypertension
+ * Thresholds: Low 0–2, Moderate 3–5, High ≥6
+ */
+
+const STORAGE_KEY = "pe_scoring_patients_v1";
+
+function calcMAP(sys, dia) {
+  if (!sys || !dia) return "";
+  const v = (Number(sys) + 2 * Number(dia)) / 3;
+  return Number.isFinite(v) ? Number(v.toFixed(1)) : "";
+}
+
+function toNumberOrNull(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+function computeScore(p) {
+  const age = toNumberOrNull(p.age);
+  const bmi = toNumberOrNull(p.bmi);
+  const mapVal = calcMAP(p.sbp, p.dbp);
+
+  let score = 0;
+  // Mild (1 pt each)
+  if (age !== null && (age < 19 || age > 35)) score += 1;
+  if (bmi !== null && bmi > 30) score += 1;
+  if (mapVal !== "" && Number(mapVal) > 85) score += 1;
+  if (String(p.proteinuria) === "1") score += 1;
+
+  // Moderate (2 pt each)
+  if (String(p.familyHistory) === "1") score += 2;
+  if (String(p.multiplePregnancy) === "1") score += 2;
+
+  // Severe (3 pt each)
+  if (String(p.prevPE) === "1") score += 3;
+  if (String(p.chronicHTN) === "1") score += 3;
+
+  return { score, mapVal };
+}
+
+function catFromScore(score) {
+  if (score >= 6) return { label: "High Risk", color: "bg-red-100 text-red-800 border-red-300" };
+  if (score >= 3) return { label: "Moderate Risk", color: "bg-amber-100 text-amber-800 border-amber-300" };
+  return { label: "Low Risk", color: "bg-emerald-100 text-emerald-800 border-emerald-300" };
+}
+
+function actionsFor(score) {
+  if (score >= 6) {
+    return [
+      "Start low-dose aspirin 81–150 mg nightly from 12–36 w (if no contraindications)",
+      "Consider calcium 1–2 g/day if dietary intake is low",
+      "Weekly BP + urine checks from 20 w; educate on red flags (headache, vision, epigastric pain)",
+      "Early referral/consult where available; manage per national/WHO guidance",
+    ];
+  }
+  if (score >= 3) {
+    return [
+      "Increase monitoring: BP + urine every 2 weeks from 20 w",
+      "Consider aspirin if score ≥4 and eligible",
+      "Counsel on warning symptoms; review weight gain",
+    ];
+  }
+  return [
+    "Routine ANC: BP + urine each visit",
+    "Re-score each visit; update if new risk factors appear",
+  ];
+}
+
+const emptyPatient = () => ({
+  id: crypto.randomUUID(),
+  name: "",
+  age: "",
+  bmi: "",
+  sbp: "",
+  dbp: "",
+  prevPE: "0",
+  familyHistory: "0",
+  chronicHTN: "0",
+  proteinuria: "0",
+  multiplePregnancy: "0",
+});
+
+export default function PreeclampsiaRiskApp() {
+  const [patients, setPatients] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+
+  // Load & persist
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) setPatients(JSON.parse(saved));
+    } catch {}
+  }, []);
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(patients));
+  }, [patients]);
+
+  const selected = useMemo(() => patients.find(p => p.id === selectedId) || null, [patients, selectedId]);
+
+  function addPatient(prefill = false) {
+    const p = emptyPatient();
+    if (prefill) {
+      p.name = "Sample Patient";
+      p.age = "28";
+      p.bmi = "32";
+      p.sbp = "138";
+      p.dbp = "88";
+      p.prevPE = "0";
+      p.familyHistory = "1";
+      p.chronicHTN = "0";
+      p.proteinuria = "0";
+      p.multiplePregnancy = "0";
+    }
+    setPatients(prev => [p, ...prev]);
+    setSelectedId(p.id);
+  }
+
+  function updateSelected(field, value) {
+    setPatients(prev => prev.map(p => (p.id === selectedId ? { ...p, [field]: value } : p)));
+  }
+
+  function removePatient(id) {
+    setPatients(prev => prev.filter(p => p.id !== id));
+    if (selectedId === id) setSelectedId(null);
+  }
+
+  function resetForm() {
+    if (!selected) return;
+    const cleared = { ...emptyPatient(), id: selected.id, name: selected.name };
+    setPatients(prev => prev.map(p => (p.id === selected.id ? cleared : p)));
+  }
+
+  function exportCSV() {
+    const headers = [
+      "Name","Age","BMI","SBP","DBP","MAP","Prev_PE","Family_History","Chronic_HTN","Proteinuria","Multiple_Pregnancy","Risk_Score","Risk_Category"
+    ];
+    const rows = patients.map(p => {
+      const { score, mapVal } = computeScore(p);
+      const cat = catFromScore(score).label;
+      return [p.name,p.age,p.bmi,p.sbp,p.dbp,mapVal, p.prevPE,p.familyHistory,p.chronicHTN,p.proteinuria,p.multiplePregnancy, score, cat];
+    });
+    const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "preeclampsia_risk_export.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importCSV(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || "");
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      const header = lines.shift();
+      if (!header) return;
+      const idx = (name) => header.split(",").indexOf(name);
+      const out = lines.map(line => {
+        const cells = line.split(",");
+        const p = emptyPatient();
+        p.name = cells[idx("Name")] || "";
+        p.age = cells[idx("Age")] || "";
+        p.bmi = cells[idx("BMI")] || "";
+        p.sbp = cells[idx("SBP")] || "";
+        p.dbp = cells[idx("DBP")] || "";
+        p.prevPE = cells[idx("Prev_PE")] || "0";
+        p.familyHistory = cells[idx("Family_History")] || "0";
+        p.chronicHTN = cells[idx("Chronic_HTN")] || "0";
+        p.proteinuria = cells[idx("Proteinuria")] || "0";
+        p.multiplePregnancy = cells[idx("Multiple_Pregnancy")] || "0";
+        return p;
+      });
+      setPatients(prev => [...out, ...prev]);
+    };
+    reader.readAsText(file);
+  }
+
+  function saveAsExcelLike() {
+    // Simple TSV for compatibility with Excel if CSV blocked
+    const headers = [
+      "Name","Age","BMI","SBP","DBP","MAP","Prev_PE","Family_History","Chronic_HTN","Proteinuria","Multiple_Pregnancy","Risk_Score","Risk_Category"
+    ];
+    const rows = patients.map(p => {
+      const { score, mapVal } = computeScore(p);
+      const cat = catFromScore(score).label;
+      return [p.name,p.age,p.bmi,p.sbp,p.dbp,mapVal,p.prevPE,p.familyHistory,p.chronicHTN,p.proteinuria,p.multiplePregnancy,score,cat].join("\t");
+    });
+    const tsv = [headers.join("\t"), ...rows].join("\n");
+    const blob = new Blob([tsv], { type: "text/tab-separated-values;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "preeclampsia_risk_export.tsv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="min-h-screen w-full bg-slate-50 text-slate-900 p-6">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Preeclampsia Risk Scoring Tool</h1>
+            <p className="text-sm text-slate-600 mt-1">Low-cost, field-ready algorithm — automatic MAP, weighted risk score, category & guidance. Data stays on this device.</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => addPatient(true)} className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 bg-emerald-600 text-white shadow hover:bg-emerald-700">
+              <Plus size={16}/> New (sample)
+            </button>
+            <button onClick={() => addPatient(false)} className="inline-flex items-center gap-2 rounded-2xl px-4 py-2 bg-slate-800 text-white shadow hover:bg-slate-900">
+              <Plus size={16}/> New
+            </button>
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6">
+          {/* Patients list */}
+          <div className="md:col-span-1">
+            <div className="bg-white rounded-2xl shadow-sm border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-semibold">Patients</h2>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border shadow-sm cursor-pointer bg-white hover:bg-slate-50">
+                    <Upload size={16}/> Import CSV
+                    <input type="file" accept=".csv" className="hidden" onChange={importCSV}/>
+                  </label>
+                  <button onClick={exportCSV} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border shadow-sm bg-white hover:bg-slate-50">
+                    <Download size={16}/> Export CSV
+                  </button>
+                </div>
+              </div>
+
+              {patients.length === 0 ? (
+                <p className="text-sm text-slate-500">No patients yet. Click <span className="font-medium">New</span> to add one.</p>
+              ) : (
+                <ul className="space-y-2 max-h-[52vh] overflow-auto pr-1">
+                  {patients.map((p) => {
+                    const { score } = computeScore(p);
+                    const cat = catFromScore(score);
+                    return (
+                      <li key={p.id} className={`rounded-xl border p-3 flex items-center justify-between ${selectedId===p.id?"ring-2 ring-emerald-300":""}`}>
+                        <button className="text-left" onClick={() => setSelectedId(p.id)}>
+                          <div className="font-medium">{p.name || "(Unnamed)"}</div>
+                          <div className="text-xs text-slate-600">Score: <span className="font-semibold">{score}</span> · <span className={`inline-flex items-center px-2 py-0.5 rounded-full border ${cat.color}`}>{cat.label}</span></div>
+                        </button>
+                        <button onClick={() => removePatient(p.id)} className="p-2 rounded-lg hover:bg-red-50 text-red-600"><Trash2 size={16}/></button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border p-4 mt-4">
+              <h3 className="font-semibold mb-2">Quick Print/Save</h3>
+              <div className="flex gap-2">
+                <button onClick={() => window.print()} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 bg-slate-900 text-white"><Save size={16}/> Print/Save PDF</button>
+                <button onClick={saveAsExcelLike} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border"><FileSpreadsheet size={16}/> Export TSV</button>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">Use CSV/TSV export for Excel, Google Sheets, or sharing offline.</p>
+            </div>
+          </div>
+
+          {/* Form & Results */}
+          <div className="md:col-span-2">
+            <div className="bg-white rounded-2xl shadow-sm border p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold">Assessment</h2>
+                {selected && (
+                  <button onClick={resetForm} className="inline-flex items-center gap-2 rounded-xl px-3 py-2 border"><RefreshCw size={16}/> Reset Form</button>
+                )}
+              </div>
+
+              {!selected ? (
+                <p className="text-sm text-slate-500">Select a patient to begin, or create a new one.</p>
+              ) : (
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* Left */}
+                  <div className="space-y-4">
+                    <TextField label="Name" value={selected.name} onChange={(v)=>updateSelected("name", v)} placeholder="e.g., Jane A."/>
+                    <div className="grid grid-cols-2 gap-3">
+                      <NumberField label="Age (years)" value={selected.age} onChange={(v)=>updateSelected("age", v)} min={12} max={60}/>
+                      <NumberField label="BMI" value={selected.bmi} onChange={(v)=>updateSelected("bmi", v)} step="0.1" min={10} max={60}/>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <NumberField label="Systolic BP (mmHg)" value={selected.sbp} onChange={(v)=>updateSelected("sbp", v)} min={60} max={260}/>
+                      <NumberField label="Diastolic BP (mmHg)" value={selected.dbp} onChange={(v)=>updateSelected("dbp", v)} min={30} max={160}/>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <SelectBool label="Previous preeclampsia" value={selected.prevPE} onChange={(v)=>updateSelected("prevPE", v)}/>
+                      <SelectBool label="Family history (mother/sister)" value={selected.familyHistory} onChange={(v)=>updateSelected("familyHistory", v)}/>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <SelectBool label="Chronic hypertension" value={selected.chronicHTN} onChange={(v)=>updateSelected("chronicHTN", v)}/>
+                      <SelectBool label="Proteinuria at booking (≥1+)" value={selected.proteinuria} onChange={(v)=>updateSelected("proteinuria", v)}/>
+                    </div>
+                    <SelectBool label="Multiple pregnancy" value={selected.multiplePregnancy} onChange={(v)=>updateSelected("multiplePregnancy", v)}/>
+                  </div>
+
+                  {/* Right */}
+                  <div className="space-y-4">
+                    {(() => {
+                      const { score, mapVal } = computeScore(selected);
+                      const cat = catFromScore(score);
+                      const actions = actionsFor(score);
+                      return (
+                        <>
+                          <div className="rounded-2xl border p-4">
+                            <div className="text-sm text-slate-600">Mean Arterial Pressure</div>
+                            <div className="text-3xl font-bold">{mapVal !== "" ? mapVal : "—"} <span className="text-base font-normal">mmHg</span></div>
+                            <div className="mt-2 text-xs text-slate-500">MAP = (SBP + 2 × DBP) ÷ 3</div>
+                          </div>
+
+                          <div className="rounded-2xl border p-4">
+                            <div className="text-sm text-slate-600">Risk Score</div>
+                            <div className="text-4xl font-extrabold tracking-tight">{score}</div>
+                            <div className={`mt-2 inline-flex items-center px-3 py-1.5 rounded-full border text-sm ${cat.color}`}>{cat.label}</div>
+                          </div>
+
+                          <div className="rounded-2xl border p-4">
+                            <div className="text-sm text-slate-600 mb-2">Recommended Actions</div>
+                            <ul className="list-disc pl-5 text-sm space-y-1">
+                              {actions.map((a,i)=>(<li key={i}>{a}</li>))}
+                            </ul>
+                          </div>
+
+                          <div className="rounded-2xl border p-4 text-xs text-slate-600">
+                            <p className="mb-1"><span className="font-semibold">Note:</span> This field tool supports early identification and referral. It does not diagnose preeclampsia. Follow national/WHO guidelines for management, especially if BP ≥140/90 after 20 weeks or if severe features occur.</p>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TextField({ label, value, onChange, placeholder }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <input
+        className="mt-1 w-full rounded-2xl border px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-300"
+        value={value}
+        onChange={(e)=>onChange(e.target.value)}
+        placeholder={placeholder}
+        type="text"
+      />
+    </label>
+  );
+}
+
+function NumberField({ label, value, onChange, step = "1", min, max }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <input
+        className="mt-1 w-full rounded-2xl border px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-300"
+        value={value}
+        onChange={(e)=>onChange(e.target.value)}
+        type="number"
+        step={step}
+        min={min}
+        max={max}
+      />
+    </label>
+  );
+}
+
+function SelectBool({ label, value, onChange }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <select
+        className="mt-1 w-full rounded-2xl border px-3 py-2 outline-none focus:ring-2 focus:ring-emerald-300 bg-white"
+        value={value}
+        onChange={(e)=>onChange(e.target.value)}
+      >
+        <option value="0">No</option>
+        <option value="1">Yes</option>
+      </select>
+    </label>
+  );
+}
