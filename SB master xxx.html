@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Preeclampsia Risk Scoring Tool</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; padding: 10px; }
+  input, select { width: 100%; margin: 5px 0 15px 0; padding: 8px; }
+  button { padding: 10px 15px; font-size: 16px; margin-right: 10px; }
+  .result { font-weight: bold; margin-top: 20px; padding: 10px; border-radius: 5px; }
+  .Low { background-color: #d4edda; color: #155724; }
+  .Moderate { background-color: #fff3cd; color: #856404; }
+  .High { background-color: #f8d7da; color: #721c24; }
+  table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+  th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+  th { background-color: #f2f2f2; }
+</style>
+</head>
+<body>
+
+<h2>Preeclampsia Risk Scoring Tool</h2>
+
+<label>Patient Name</label>
+<input type="text" id="name">
+
+<label>Age (years)</label>
+<input type="number" id="age" min="10" max="50">
+
+<label>BMI</label>
+<input type="number" id="bmi" min="10" max="60" step="0.1">
+
+<label>Systolic BP (mmHg)</label>
+<input type="number" id="sbp" min="80" max="200">
+
+<label>Diastolic BP (mmHg)</label>
+<input type="number" id="dbp" min="40" max="120">
+
+<label>Previous Preeclampsia?</label>
+<select id="prev_pe">
+  <option value="0">No</option>
+  <option value="3">Yes</option>
+</select>
+
+<label>Family History of Preeclampsia?</label>
+<select id="family_history">
+  <option value="0">No</option>
+  <option value="2">Yes</option>
+</select>
+
+<label>Chronic Hypertension?</label>
+<select id="chronic_htn">
+  <option value="0">No</option>
+  <option value="3">Yes</option>
+</select>
+
+<label>Proteinuria?</label>
+<select id="proteinuria">
+  <option value="0">No</option>
+  <option value="1">Yes</option>
+</select>
+
+<label>Multiple Pregnancy?</label>
+<select id="multiple_preg">
+  <option value="0">No</option>
+  <option value="2">Yes</option>
+</select>
+
+<button onclick="calculateRisk()">Calculate Risk</button>
+<button onclick="exportCSV()">Export CSV</button>
+
+<div class="result" id="result"></div>
+
+<h3>Patient Records</h3>
+<table id="patientTable">
+  <thead>
+    <tr>
+      <th>Name</th><th>Score</th><th>Category</th><th>MAP</th><th>Recommendation</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+let patients = [];
+
+function calculateRisk() {
+    const name = document.getElementById('name').value || 'Unknown';
+    const age = parseInt(document.getElementById('age').value);
+    const bmi = parseFloat(document.getElementById('bmi').value);
+    const sbp = parseInt(document.getElementById('sbp').value);
+    const dbp = parseInt(document.getElementById('dbp').value);
+    const prev_pe = parseInt(document.getElementById('prev_pe').value);
+    const family_history = parseInt(document.getElementById('family_history').value);
+    const chronic_htn = parseInt(document.getElementById('chronic_htn').value);
+    const proteinuria = parseInt(document.getElementById('proteinuria').value);
+    const multiple_preg = parseInt(document.getElementById('multiple_preg').value);
+
+    const map = (sbp + 2*dbp)/3;
+
+    let score = 0;
+    score += (age > 35 || age < 19) ? 1 : 0;
+    score += (bmi > 30) ? 1 : 0;
+    score += (map > 85) ? 1 : 0;
+    score += prev_pe;
+    score += family_history;
+    score += chronic_htn;
+    score += proteinuria;
+    score += multiple_preg;
+
+    let category = '';
+    let recommendation = '';
+    if(score >= 6) {
+        category = 'High';
+        recommendation = 'High risk: Start low-dose aspirin (81-150mg daily), calcium supplementation if dietary intake low. Weekly BP and urine monitoring from 20 weeks. Educate on warning signs. Refer if severe.';
+    } else if(score >=3) {
+        category = 'Moderate';
+        recommendation = 'Moderate risk: Consider low-dose aspirin if ≥4 points. Monitor BP and urine every 2 weeks from 20 weeks. Educate on warning signs.';
+    } else {
+        category = 'Low';
+        recommendation = 'Low risk: Routine antenatal care with regular BP and urine checks.';
+    }
+
+    // Show result
+    const resultDiv = document.getElementById('result');
+    resultDiv.innerHTML = `Patient: ${name} <br> Score: ${score} <br> Risk Category: ${category} <br> Recommendation: ${recommendation}`;
+    resultDiv.className = `result ${category}`;
+
+    // Add to patient list
+    patients.push({name, score, category, map: map.toFixed(1), recommendation});
+    updateTable();
+}
+
+function updateTable() {
+    const tbody = document.querySelector('#patientTable tbody');
+    tbody.innerHTML = '';
+    patients.forEach(p => {
+        const row = document.createElement('tr');
+        row.innerHTML = `<td>${p.name}</td><td>${p.score}</td><td>${p.category}</td><td>${p.map}</td><td>${p.recommendation}</td>`;
+        tbody.appendChild(row);
+    });
+}
+
+function exportCSV() {
+    let csv = 'Name,Score,Category,MAP,Recommendation\n';
+    patients.forEach(p => {
+        csv += `"${p.name}",${p.score},${p.category},${p.map},"${p.recommendation}"\n`;
+    });
+
+    const blob = new Blob([csv], {type: 'text/csv'});
+    const link = document.createElement('a');
+    link.download = 'Preeclampsia_Risk_Data.csv';
+    link.href = window.URL.createObjectURL(blob);
+    link.click();
+}
+</script>
+
+</body>
+</html>
